@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>المحامية فجر</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="المحامية فجر">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#7a1f2b">
+<style>
+  html, body { margin: 0; height: 100%; background: #7a1f2b; font-family: system-ui, -apple-system, Tahoma, sans-serif; }
+  body { padding-top: env(safe-area-inset-top); box-sizing: border-box; }
+  #app { border: 0; width: 100%; height: 100%; display: block; background: #f6f4ef; }
+  #nb { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+        display: none; border: 0; border-radius: 999px; padding: 12px 20px; font: inherit; font-size: 15px;
+        background: #15803d; color: #fff; box-shadow: 0 4px 14px rgba(0,0,0,.25); cursor: pointer; z-index: 9; }
+  #msg { position: fixed; top: calc(12px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+         display: none; background: #1d2433; color: #fff; padding: 10px 16px; border-radius: 10px; z-index: 9; max-width: 90%; }
+  #lock { display: none; color: #fff; text-align: center; padding: 60px 24px; }
+</style>
+</head>
+<body>
+<iframe id="app" title="المحامية فجر" allow="clipboard-write; clipboard-read"></iframe>
+<div id="lock"><h2>🔒 افتحي التطبيق من الرابط الكامل مرة وحدة</h2><p>الرابط اللي آخره ?k=...</p></div>
+<button id="nb">🔔 فعّلي الإشعارات</button>
+<div id="msg"></div>
+
+<script src="config.js"></script>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getMessaging, getToken, onMessage, isSupported } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js';
+
+const CFG = self.APP_CONFIG;
+const $ = id => document.getElementById(id);
+const say = (t, ms = 4000) => { const m = $('msg'); m.textContent = t; m.style.display = 'block'; clearTimeout(say._h); say._h = setTimeout(() => m.style.display = 'none', ms); };
+const store = {
+  get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} }
+};
+
+// المفتاح السري: من الرابط أول مرة، بعدها محفوظ في الجهاز
+const qs = new URLSearchParams(location.search);
+let key = qs.get('k');
+if (key) store.set('k', key); else key = store.get('k');
+
+if (!key) {
+  $('app').style.display = 'none';
+  $('lock').style.display = 'block';
+} else {
+  const src = new URL(CFG.exec);
+  src.searchParams.set('k', key);
+  ['job', 'do'].forEach(n => { if (qs.get(n)) src.searchParams.set(n, qs.get(n)); });
+  $('app').src = src.toString();
+}
+
+// ===== الإشعارات =====
+const ready = CFG.firebase.apiKey && CFG.firebase.apiKey !== 'PASTE';
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+async function register(ask) {
+  if (!ready || !key) return;
+  if (!(await isSupported().catch(() => false))) {
+    if (ask) say(isIOS && !standalone ? 'أضيفي التطبيق للشاشة الرئيسية أول، وافتحيه من الأيقونة' : 'هذا المتصفح ما يدعم الإشعارات', 6000);
+    return;
+  }
+  if (ask) {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { say('ما انسمح بالإشعارات — فعّليها من إعدادات التلفون', 6000); return; }
+  } else if (Notification.permission !== 'granted') return;
+
+  try {
+    const reg = await navigator.serviceWorker.register('firebase-messaging-sw.js');
+    const messaging = getMessaging(initializeApp(CFG.firebase));
+    const token = await getToken(messaging, { vapidKey: CFG.vapidKey, serviceWorkerRegistration: reg });
+    if (!token) return;
+    const today = new Date().toDateString();
+    if (ask || store.get('tok') !== token || store.get('tokDay') !== today) {
+      const u = new URL(CFG.exec);
+      u.searchParams.set('k', key);
+      u.searchParams.set('token', token);
+      u.searchParams.set('wrap', location.origin + location.pathname.replace(/[^/]*$/, ''));
+      await fetch(u.toString(), { mode: 'no-cors' });
+      store.set('tok', token); store.set('tokDay', today);
+    }
+    $('nb').style.display = 'none';
+    if (ask) say('✅ تم تفعيل الإشعارات');
+    onMessage(messaging, p => {
+      const n = p.notification || {};
+      say('🔔 ' + (n.title || '') + (n.body ? ' — ' + n.body : ''), 7000);
+    });
+  } catch (e) {
+    if (ask) say('⚠️ ' + e.message, 8000);
+  }
+}
+
+if (ready && key && 'Notification' in window && 'serviceWorker' in navigator) {
+  if (Notification.permission === 'granted') register(false);
+  else if (Notification.permission !== 'denied') $('nb').style.display = 'block';
+}
+$('nb').onclick = () => register(true);
+</script>
+</body>
+</html>
